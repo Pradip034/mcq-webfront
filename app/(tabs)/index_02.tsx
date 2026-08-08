@@ -1,4 +1,3 @@
-import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -16,9 +15,6 @@ import {
 
 const API_URL = 'http://localhost:5000/api';
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
-
-// Standard warning / alert sound URL
-const DANGER_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
 interface Option {
   text: string;
@@ -69,6 +65,7 @@ export default function Index() {
   useEffect(() => {
     if (loading || result || questions.length === 0) return;
 
+    // Reset countdown for active question
     setTimeLeft(30);
 
     const timer = setInterval(() => {
@@ -76,6 +73,7 @@ export default function Index() {
         if (prev <= 1) {
           clearInterval(timer);
           
+          // Advance to next question or auto-submit on last question
           const currentIdx = currentIndexRef.current;
           const totalQuestions = questionsRef.current.length;
 
@@ -102,24 +100,6 @@ export default function Index() {
       console.error("Error fetching questions:", error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Helper function to play danger sound on wrong answer
-  const playDangerSound = async () => {
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: DANGER_SOUND_URL },
-        { shouldPlay: true }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (error) {
-      console.error('Failed to play danger sound:', error);
     }
   };
 
@@ -173,26 +153,6 @@ export default function Index() {
 
   const handleSelectOption = (optionIndex: number) => {
     const currentQ = questions[currentIndex];
-
-    // Stop ongoing question/option reading before playing selection voice/audio
-    Speech.stop();
-    setIsSpeaking(false);
-    setSpeakingOptionIndex(null);
-
-    if (currentQ.correctOption !== undefined) {
-      if (optionIndex === currentQ.correctOption) {
-        // Voice out "Right answer selected" for correct choices
-        Speech.speak('Right answer selected', {
-          language: 'en-US',
-          pitch: 1.0,
-          rate: 1.0,
-        });
-      } else {
-        // Play alert audio for wrong choices
-        playDangerSound();
-      }
-    }
-
     setUserAnswers((prev) => {
       const existingIndex = prev.findIndex((a) => a.id === currentQ.id);
       if (existingIndex > -1) {
