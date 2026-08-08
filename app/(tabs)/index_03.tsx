@@ -113,6 +113,7 @@ export default function Index() {
         { shouldPlay: true }
       );
       
+      // Unload sound from memory after it finishes playing
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status.isLoaded && status.didJustFinish) {
           sound.unloadAsync();
@@ -174,23 +175,9 @@ export default function Index() {
   const handleSelectOption = (optionIndex: number) => {
     const currentQ = questions[currentIndex];
 
-    // Stop ongoing question/option reading before playing selection voice/audio
-    Speech.stop();
-    setIsSpeaking(false);
-    setSpeakingOptionIndex(null);
-
-    if (currentQ.correctOption !== undefined) {
-      if (optionIndex === currentQ.correctOption) {
-        // Voice out "Right answer selected" for correct choices
-        Speech.speak('Right answer selected', {
-          language: 'en-US',
-          pitch: 1.0,
-          rate: 1.0,
-        });
-      } else {
-        // Play alert audio for wrong choices
-        playDangerSound();
-      }
+    // Trigger danger audio if selected answer is wrong
+    if (currentQ.correctOption !== undefined && optionIndex !== currentQ.correctOption) {
+      playDangerSound();
     }
 
     setUserAnswers((prev) => {
