@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 
 ////const API_URL = 'http://10.117.181.86:5000/api';
-const API_URL = 'https:/mcq-backend-6yod.onrender.com';
+const API_URL = 'https:/mcq-backend-6yod.onrender.com/api';
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
 
 interface Option {
