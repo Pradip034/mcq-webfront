@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 
 //const API_URL = 'http://localhost:5000/api';
+
 const API_URL = 'https://backend-02-zbm8.onrender.com/api';
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
 const DANGER_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
