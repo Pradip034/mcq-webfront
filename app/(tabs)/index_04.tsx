@@ -1,29 +1,31 @@
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Image,
-    Linking,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Image,
+  Linking,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 //const API_URL = 'http://localhost:5000/api';
+//const API_URL = 'https://mcq-backend-6yod.onrender.com/api';
 const API_URL = 'https://backend-02-zbm8.onrender.com/api';
+
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
+
+// Standard warning / alert sound URL
 const DANGER_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
 interface Option {
   text: string;
   image?: string;
-  explanation?: string;
 }
 
 interface Question {
@@ -31,7 +33,6 @@ interface Question {
   question: string;
   options: Option[];
   correctOption: number;
-  generalExplanation?: string;
 }
 
 export default function Index() {
@@ -44,17 +45,7 @@ export default function Index() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingOptionIndex, setSpeakingOptionIndex] = useState<number | null>(null);
 
-  // New state to track which step of the explanation is currently active
-  const [explanationStep, setExplanationStep] = useState<'wrong' | 'correct' | null>(null);
-
-  // Track image load errors to swap to default image automatically
-  const [failedImages, setFailedImages] = useState<{ [key: string]: boolean }>({});
-
-  // Animation states
-  const flashAnim = useRef(new Animated.Value(0)).current;
-  const [animatingOptionIndex, setAnimatingOptionIndex] = useState<number | null>(null);
-
-  // Refs to avoid stale closures in timer
+  // Refs to prevent stale closure references
   const currentIndexRef = useRef(currentIndex);
   const questionsRef = useRef(questions);
 
@@ -70,19 +61,18 @@ export default function Index() {
     fetchQuestions();
   }, []);
 
-  // Reset TTS, Explanation step, and Animation on question change
+  // Stop text-to-speech when question changes
   useEffect(() => {
     Speech.stop();
     setIsSpeaking(false);
-    setExplanationStep(null);
     setSpeakingOptionIndex(null);
-    setAnimatingOptionIndex(null);
-    flashAnim.setValue(0);
   }, [currentIndex]);
 
-  // Timer countdown
+  // Robust Timer Hook (Prevents duplicate intervals and question skips)
   useEffect(() => {
-    if (loading || result || questions.length === 0 || isSpeaking) return;
+    if (loading || result || questions.length === 0) return;
+
+    setTimeLeft(30);
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -104,7 +94,7 @@ export default function Index() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [currentIndex, loading, result, questions.length, isSpeaking]);
+  }, [currentIndex, loading, result, questions.length]);
 
   const fetchQuestions = async () => {
     try {
@@ -118,12 +108,14 @@ export default function Index() {
     }
   };
 
+  // Helper function to play danger sound on wrong answer
   const playDangerSound = async () => {
     try {
       const { sound } = await Audio.Sound.createAsync(
         { uri: DANGER_SOUND_URL },
         { shouldPlay: true }
       );
+      
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status.isLoaded && status.didJustFinish) {
           sound.unloadAsync();
@@ -134,123 +126,14 @@ export default function Index() {
     }
   };
 
-  const triggerSelectionAnimation = (optionIndex: number) => {
-    setAnimatingOptionIndex(optionIndex);
-    flashAnim.setValue(0);
-    Animated.sequence([
-      Animated.timing(flashAnim, {
-        toValue: 1,
-        duration: 250,
-        useNativeDriver: false,
-      }),
-      Animated.timing(flashAnim, {
-        toValue: 0,
-        duration: 350,
-        useNativeDriver: false,
-      })
-    ]).start(() => setAnimatingOptionIndex(null));
-  };
-
-  const speakSequence = (parts: { text: string; step: 'wrong' | 'correct' }[]) => {
-    if (parts.length === 0) {
-      setIsSpeaking(false);
-      setExplanationStep(null);
-      return;
-    }
-
-    const currentPart = parts[0];
-    setIsSpeaking(true);
-    setExplanationStep(currentPart.step);
-
-    Speech.speak(currentPart.text, {
-      language: 'en-US',
-      pitch: 1.0,
-      rate: 0.9,
-      onDone: () => {
-        // Move to the next speech segment sequentially
-        speakSequence(parts.slice(1));
-      },
-      onStopped: () => {
-        setIsSpeaking(false);
-        setExplanationStep(null);
-      },
-      onError: (err) => {
-        console.error('Speech error:', err);
-        setIsSpeaking(false);
-        setExplanationStep(null);
-      },
-    });
-  };
-
-  const handleSelectOption = (optionIndex: number) => {
-    const currentQ = questions[currentIndex];
-    if (!currentQ || !currentQ.options || currentQ.correctOption === undefined) return;
-
-    // Force stop existing speech
-    Speech.stop();
-    setIsSpeaking(false);
-    setSpeakingOptionIndex(null);
-    setExplanationStep(null);
-
-    // Trigger flash animation
-    triggerSelectionAnimation(optionIndex);
-
-    const isCorrect = optionIndex === currentQ.correctOption;
-    const selectedOpt = currentQ.options[optionIndex];
-    const correctOpt = currentQ.options[currentQ.correctOption];
-
-    // Fallbacks to guarantee string presence
-    const selectedText = selectedOpt?.text || `Option ${optionIndex + 1}`;
-    const correctText = correctOpt?.text || `Option ${currentQ.correctOption + 1}`;
-    const wrongReason = selectedOpt?.explanation || `${selectedText} is incorrect for this question.`;
-    const correctReason = correctOpt?.explanation || currentQ.generalExplanation || 'it satisfies the question conditions.';
-
-    if (isCorrect) {
-      const parts = [
-        {
-          text: `Correct answer! ${correctReason}`,
-          step: 'correct' as const,
-        },
-      ];
-      setTimeout(() => speakSequence(parts), 100);
-    } else {
-      playDangerSound();
-      const parts = [
-        {
-          text: `Wrong answer. Option ${optionIndex + 1} is incorrect because ${wrongReason}.`,
-          step: 'wrong' as const,
-        },
-        {
-          text: `The correct answer is Option ${currentQ.correctOption + 1}: ${correctText}, because ${correctReason}`,
-          step: 'correct' as const,
-        },
-      ];
-      setTimeout(() => speakSequence(parts), 100);
-    }
-
-    // Record user answer
-    setUserAnswers((prev) => {
-      const existingIndex = prev.findIndex((a) => a.id === currentQ.id);
-      if (existingIndex > -1) {
-        const updated = [...prev];
-        updated[existingIndex].selectedOption = optionIndex;
-        return updated;
-      } else {
-        return [...prev, { id: currentQ.id, selectedOption: optionIndex }];
-      }
-    });
-  };
-
   const speakQuestion = (text: string) => {
     if (isSpeaking && speakingOptionIndex === null) {
       Speech.stop();
       setIsSpeaking(false);
-      setExplanationStep(null);
     } else {
       Speech.stop();
       setIsSpeaking(true);
       setSpeakingOptionIndex(null);
-      setExplanationStep(null);
       Speech.speak(text, {
         language: 'en-US',
         pitch: 1.0,
@@ -267,12 +150,10 @@ export default function Index() {
       Speech.stop();
       setIsSpeaking(false);
       setSpeakingOptionIndex(null);
-      setExplanationStep(null);
     } else {
       Speech.stop();
       setIsSpeaking(true);
       setSpeakingOptionIndex(index);
-      setExplanationStep(null);
       Speech.speak(`Option ${index + 1}: ${optionText}`, {
         language: 'en-US',
         pitch: 1.0,
@@ -293,17 +174,49 @@ export default function Index() {
     }
   };
 
+  const handleSelectOption = (optionIndex: number) => {
+    const currentQ = questions[currentIndex];
+
+    // Stop ongoing question/option reading before playing selection voice/audio
+    Speech.stop();
+    setIsSpeaking(false);
+    setSpeakingOptionIndex(null);
+
+    if (currentQ.correctOption !== undefined) {
+      if (optionIndex === currentQ.correctOption) {
+        // Voice out "Right answer selected" for correct choices
+        Speech.speak('Right answer selected', {
+          language: 'en-US',
+          pitch: 1.0,
+          rate: 1.0,
+        });
+      } else {
+        // Play alert audio for wrong choices
+        playDangerSound();
+      }
+    }
+
+    setUserAnswers((prev) => {
+      const existingIndex = prev.findIndex((a) => a.id === currentQ.id);
+      if (existingIndex > -1) {
+        const updated = [...prev];
+        updated[existingIndex].selectedOption = optionIndex;
+        return updated;
+      } else {
+        return [...prev, { id: currentQ.id, selectedOption: optionIndex }];
+      }
+    });
+  };
+
   const handleNext = () => {
     if (currentIndex < questions.length - 1) {
       setCurrentIndex((prev) => prev + 1);
-      setTimeLeft(30);
     }
   };
 
   const handlePrevious = () => {
     if (currentIndex > 0) {
       setCurrentIndex((prev) => prev - 1);
-      setTimeLeft(30);
     }
   };
 
@@ -360,11 +273,6 @@ export default function Index() {
     setUserAnswers([]);
     setCurrentIndex(0);
     setResult(null);
-    setTimeLeft(30);
-  };
-
-  const handleImageError = (imageKey: string) => {
-    setFailedImages((prev) => ({ ...prev, [imageKey]: true }));
   };
 
   if (loading) {
@@ -440,13 +348,6 @@ export default function Index() {
                       </View>
                     );
                   })}
-
-                  {/* Summary Explanations */}
-                  {q.generalExplanation && (
-                    <Text style={styles.summaryExplanationText}>
-                      💡 <Text style={{ fontWeight: 'bold' }}>Concept:</Text> {q.generalExplanation}
-                    </Text>
-                  )}
                 </View>
               );
             })}
@@ -461,10 +362,6 @@ export default function Index() {
   const selectedForCurrent = userAnswers.find(a => a.id === currentQ?.id)?.selectedOption;
   const currentLiveScore = calculateLiveScore();
   const maxPossibleScore = questions.length * 4;
-
-  const isCurrentAnswered = selectedForCurrent !== undefined;
-  const selectedOptObj = isCurrentAnswered ? currentQ.options[selectedForCurrent] : null;
-  const correctOptObj = isCurrentAnswered ? currentQ.options[currentQ.correctOption] : null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -509,12 +406,6 @@ export default function Index() {
               const isSelected = selectedForCurrent === index;
               const isCorrectAnswer = index === currentQ.correctOption;
               const isOptionSpeaking = isSpeaking && speakingOptionIndex === index;
-              const isAnimatingThisOption = animatingOptionIndex === index;
-
-              const imageKey = `${currentQ.id}-${index}`;
-              const imageUri = (option.image && !failedImages[imageKey]) 
-                ? option.image 
-                : DEFAULT_STETHOSCOPE_IMAGE;
 
               let cardStyle = styles.optionCard;
               if (selectedForCurrent !== undefined) {
@@ -525,84 +416,36 @@ export default function Index() {
                 }
               }
 
-              const targetColor = isCorrectAnswer ? '#22C55E' : '#EF4444';
-              const animatedBackgroundColor = flashAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: ['#1E1E24', targetColor],
-              });
-
               return (
                 <TouchableOpacity
                   key={index}
+                  style={[styles.optionCardBase, cardStyle]}
                   onPress={() => handleSelectOption(index)}
                   activeOpacity={0.8}
                 >
-                  <Animated.View
-                    style={[
-                      styles.optionCardBase,
-                      cardStyle,
-                      isAnimatingThisOption && {
-                        backgroundColor: animatedBackgroundColor,
-                        transform: [
-                          {
-                            scale: flashAnim.interpolate({
-                              inputRange: [0, 0.5, 1],
-                              outputRange: [1, 1.03, 1],
-                            }),
-                          },
-                        ],
-                      },
-                    ]}
+                  <Image
+                    source={{ uri: option.image || DEFAULT_STETHOSCOPE_IMAGE }}
+                    style={styles.optionImage}
+                  />
+                  <Text style={styles.optionText}>
+                    {index + 1}. {option.text}
+                  </Text>
+                  
+                  <TouchableOpacity
+                    style={[styles.optionAudioButton, isOptionSpeaking && styles.audioButtonActive]}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      speakOption(index, option.text);
+                    }}
+                    activeOpacity={0.7}
                   >
-                    <Image
-                      source={{ uri: imageUri }}
-                      style={styles.optionImage}
-                      onError={() => handleImageError(imageKey)}
-                    />
-                    <Text style={styles.optionText}>
-                      {index + 1}. {option.text}
+                    <Text style={styles.optionAudioText}>
+                      {isOptionSpeaking ? '🛑' : '🔊'}
                     </Text>
-                    
-                    <TouchableOpacity
-                      style={[styles.optionAudioButton, isOptionSpeaking && styles.audioButtonActive]}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        speakOption(index, option.text);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.optionAudioText}>
-                        {isOptionSpeaking ? '🛑' : '🔊'}
-                      </Text>
-                    </TouchableOpacity>
-                  </Animated.View>
+                  </TouchableOpacity>
                 </TouchableOpacity>
               );
             })}
-
-            {/* STEP 1: Wrong Answer Explanation Block - displayed ONLY when reading the wrong reason */}
-            {isCurrentAnswered && isSpeaking && explanationStep === 'wrong' && (
-              <View style={[styles.explanationBox, styles.explanationBoxWrong]}>
-                <Text style={styles.explanationTitle}>
-                  ❌ Wrong Answer Reason (Option {selectedForCurrent + 1}):
-                </Text>
-                <Text style={styles.explanationText}>
-                  {selectedOptObj?.explanation || `${selectedOptObj?.text} is incorrect for this question.`}
-                </Text>
-              </View>
-            )}
-
-            {/* STEP 2: Right Answer Explanation Block - displayed ONLY when reading the correct reason */}
-            {isCurrentAnswered && isSpeaking && explanationStep === 'correct' && (
-              <View style={[styles.explanationBox, styles.explanationBoxCorrect]}>
-                <Text style={styles.explanationTitle}>
-                  ✅ Right Answer Explanation (Option {currentQ.correctOption + 1}: {correctOptObj?.text}):
-                </Text>
-                <Text style={styles.explanationText}>
-                  {correctOptObj?.explanation || currentQ.generalExplanation || "This choice is correct."}
-                </Text>
-              </View>
-            )}
 
             <View style={styles.navRow}>
               {currentIndex > 0 && (
@@ -665,16 +508,10 @@ const styles = StyleSheet.create({
   correctOptionCard: { backgroundColor: '#15803D', borderColor: '#22C55E' },
   wrongOptionCard: { backgroundColor: '#991B1B', borderColor: '#EF4444' },
   
-  optionImage: { width: 40, height: 40, borderRadius: 6, marginRight: 12, backgroundColor: '#27272A' },
+  optionImage: { width: 36, height: 36, borderRadius: 6, marginRight: 12 },
   optionText: { fontSize: 15, color: '#FFFFFF', fontWeight: 'bold', flex: 1 },
   optionAudioButton: { backgroundColor: '#27272A', width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#3F3F46', marginLeft: 8 },
   optionAudioText: { fontSize: 14 },
-
-  explanationBox: { padding: 14, borderRadius: 10, marginTop: 4, marginBottom: 12, borderWidth: 1 },
-  explanationBoxCorrect: { backgroundColor: '#064E3B', borderColor: '#059669' },
-  explanationBoxWrong: { backgroundColor: '#450A0A', borderColor: '#DC2626' },
-  explanationTitle: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 13, marginBottom: 4 },
-  explanationText: { color: '#E4E4E7', fontSize: 13, lineHeight: 18 },
 
   headerText: { fontSize: 24, fontWeight: 'bold', color: '#FFFFFF', textAlign: 'center', marginBottom: 12 },
   scoreText: { fontSize: 22, textAlign: 'center', marginBottom: 16, color: '#38BDF8', fontWeight: 'bold' },
@@ -685,7 +522,6 @@ const styles = StyleSheet.create({
   
   summaryCard: { backgroundColor: '#18181B', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#27272A' },
   summaryQuestionText: { fontSize: 15, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 8 },
-  summaryExplanationText: { color: '#A1A1AA', fontSize: 13, marginTop: 8 },
   resultOptionBase: { flexDirection: 'row', justifyContent: 'space-between', padding: 10, borderRadius: 6, marginBottom: 6 },
   resultOptionDefault: { backgroundColor: '#27272A' },
   resultOptionCorrect: { backgroundColor: '#15803D' },
@@ -693,7 +529,7 @@ const styles = StyleSheet.create({
   resultOptionText: { color: '#FFFFFF', fontSize: 14, flex: 1 },
   badgeLabel: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 },
 
-  navRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, gap: 12 },
+  navRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20, gap: 12 },
   nextButton: { backgroundColor: '#2563EB', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
   submitButton: { backgroundColor: '#16A34A', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
   whatsappButton: { backgroundColor: '#25D366', padding: 14, borderRadius: 10, alignItems: 'center' },
