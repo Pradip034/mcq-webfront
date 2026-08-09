@@ -2,19 +2,21 @@ import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Linking,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Image,
+  Linking,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
-const API_URL = 'http://localhost:5000/api';
+//const API_URL = 'http://localhost:5000/api';
+const API_URL = 'https://mcq-backend-6yod.onrender.com/api/';
+
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
 
 // Standard warning / alert sound URL
