@@ -14,8 +14,9 @@ import {
   View
 } from 'react-native';
 
-const API_URL = 'http://localhost:5000/api';
+//const API_URL = 'http://localhost:5000/api';
 //const API_URL = 'https://mcq-backend-6yod.onrender.com/api';
+const API_URL = 'https://backend-02-zbm8.onrender.com/api';
 
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
 
