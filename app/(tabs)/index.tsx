@@ -2,22 +2,22 @@ import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Image,
-    Linking,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Image,
+  Linking,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 //const API_URL = 'http://localhost:5000/api';
-
 const API_URL = 'https://backend-02-zbm8.onrender.com/api';
+
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
 const DANGER_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
@@ -45,15 +45,19 @@ export default function Index() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingOptionIndex, setSpeakingOptionIndex] = useState<number | null>(null);
 
-  // New state to track which step of the explanation is currently active
+  // Tracks active speech step
   const [explanationStep, setExplanationStep] = useState<'wrong' | 'correct' | null>(null);
 
-  // Track image load errors to swap to default image automatically
+  // Image fallback tracker
   const [failedImages, setFailedImages] = useState<{ [key: string]: boolean }>({});
 
-  // Animation states
+  // Animations
   const flashAnim = useRef(new Animated.Value(0)).current;
   const [animatingOptionIndex, setAnimatingOptionIndex] = useState<number | null>(null);
+
+  // Bottom Up Curved Floating Score Delta Animation targeting Scoreboard
+  const [scoreDelta, setScoreDelta] = useState<string | null>(null);
+  const scoreDeltaAnim = useRef(new Animated.Value(0)).current;
 
   // Refs to avoid stale closures in timer
   const currentIndexRef = useRef(currentIndex);
@@ -71,7 +75,7 @@ export default function Index() {
     fetchQuestions();
   }, []);
 
-  // Reset TTS, Explanation step, and Animation on question change
+  // Reset TTS and status on question change
   useEffect(() => {
     Speech.stop();
     setIsSpeaking(false);
@@ -81,6 +85,17 @@ export default function Index() {
     flashAnim.setValue(0);
   }, [currentIndex]);
 
+  // Trigger curved score delta animation to end right on the Scoreboard label
+  const triggerScoreDeltaAnimation = (deltaText: string) => {
+    setScoreDelta(deltaText);
+    scoreDeltaAnim.setValue(0);
+    Animated.timing(scoreDeltaAnim, {
+      toValue: 1,
+      duration: 1200,
+      useNativeDriver: true,
+    }).start(() => setScoreDelta(null));
+  };
+
   // Timer countdown
   useEffect(() => {
     if (loading || result || questions.length === 0 || isSpeaking) return;
@@ -89,12 +104,16 @@ export default function Index() {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          
+
+          // Handle automatic timeout as skipped
+          triggerScoreDeltaAnimation('0');
+
           const currentIdx = currentIndexRef.current;
           const totalQuestions = questionsRef.current.length;
 
           if (currentIdx < totalQuestions - 1) {
             setCurrentIndex(currentIdx + 1);
+            setTimeLeft(30);
           } else {
             handleSubmit();
           }
@@ -167,10 +186,7 @@ export default function Index() {
       language: 'en-US',
       pitch: 1.0,
       rate: 0.9,
-      onDone: () => {
-        // Move to the next speech segment sequentially
-        speakSequence(parts.slice(1));
-      },
+      onDone: () => speakSequence(parts.slice(1)),
       onStopped: () => {
         setIsSpeaking(false);
         setExplanationStep(null);
@@ -187,26 +203,24 @@ export default function Index() {
     const currentQ = questions[currentIndex];
     if (!currentQ || !currentQ.options || currentQ.correctOption === undefined) return;
 
-    // Force stop existing speech
     Speech.stop();
     setIsSpeaking(false);
     setSpeakingOptionIndex(null);
     setExplanationStep(null);
 
-    // Trigger flash animation
     triggerSelectionAnimation(optionIndex);
 
     const isCorrect = optionIndex === currentQ.correctOption;
     const selectedOpt = currentQ.options[optionIndex];
     const correctOpt = currentQ.options[currentQ.correctOption];
 
-    // Fallbacks to guarantee string presence
     const selectedText = selectedOpt?.text || `Option ${optionIndex + 1}`;
     const correctText = correctOpt?.text || `Option ${currentQ.correctOption + 1}`;
     const wrongReason = selectedOpt?.explanation || `${selectedText} is incorrect for this question.`;
     const correctReason = correctOpt?.explanation || currentQ.generalExplanation || 'it satisfies the question conditions.';
 
     if (isCorrect) {
+      triggerScoreDeltaAnimation('+4');
       const parts = [
         {
           text: `Correct answer! ${correctReason}`,
@@ -215,6 +229,7 @@ export default function Index() {
       ];
       setTimeout(() => speakSequence(parts), 100);
     } else {
+      triggerScoreDeltaAnimation('-1');
       playDangerSound();
       const parts = [
         {
@@ -229,7 +244,6 @@ export default function Index() {
       setTimeout(() => speakSequence(parts), 100);
     }
 
-    // Record user answer
     setUserAnswers((prev) => {
       const existingIndex = prev.findIndex((a) => a.id === currentQ.id);
       if (existingIndex > -1) {
@@ -306,6 +320,11 @@ export default function Index() {
       setCurrentIndex((prev) => prev - 1);
       setTimeLeft(30);
     }
+  };
+
+  const handleSkip = () => {
+    triggerScoreDeltaAnimation('0');
+    handleNext();
   };
 
   const calculateLiveScore = () => {
@@ -442,7 +461,6 @@ export default function Index() {
                     );
                   })}
 
-                  {/* Summary Explanations */}
                   {q.generalExplanation && (
                     <Text style={styles.summaryExplanationText}>
                       💡 <Text style={{ fontWeight: 'bold' }}>Concept:</Text> {q.generalExplanation}
@@ -467,6 +485,8 @@ export default function Index() {
   const selectedOptObj = isCurrentAnswered ? currentQ.options[selectedForCurrent] : null;
   const correctOptObj = isCurrentAnswered ? currentQ.options[currentQ.correctOption] : null;
 
+  const deltaStyle = scoreDelta === '+4' ? styles.deltaPositive : scoreDelta === '-1' ? styles.deltaNegative : styles.deltaNeutral;
+
   return (
     <SafeAreaView style={styles.container}>
       {questions.length > 0 && currentQ && (
@@ -478,6 +498,7 @@ export default function Index() {
               </Text>
               
               <View style={styles.badgesContainer}>
+                {/* Scoreboard Target */}
                 <View style={styles.scoreBadge}>
                   <Text style={styles.scoreBadgeText}>
                     Score: {currentLiveScore >= 0 ? `+${currentLiveScore}` : currentLiveScore} / {maxPossibleScore}
@@ -581,7 +602,7 @@ export default function Index() {
               );
             })}
 
-            {/* STEP 1: Wrong Answer Explanation Block - displayed ONLY when reading the wrong reason */}
+            {/* Wrong Answer Explanation */}
             {isCurrentAnswered && isSpeaking && explanationStep === 'wrong' && (
               <View style={[styles.explanationBox, styles.explanationBoxWrong]}>
                 <Text style={styles.explanationTitle}>
@@ -593,7 +614,7 @@ export default function Index() {
               </View>
             )}
 
-            {/* STEP 2: Right Answer Explanation Block - displayed ONLY when reading the correct reason */}
+            {/* Right Answer Explanation */}
             {isCurrentAnswered && isSpeaking && explanationStep === 'correct' && (
               <View style={[styles.explanationBox, styles.explanationBoxCorrect]}>
                 <Text style={styles.explanationTitle}>
@@ -605,8 +626,49 @@ export default function Index() {
               </View>
             )}
 
+            {/* Score Delta animation trajectory that flies in a curve and lands on the top-right score label */}
+            <View style={styles.bottomAnimationContainer} pointerEvents="none">
+              {scoreDelta !== null && (
+                <Animated.Text
+                  style={[
+                    styles.giantScoreDeltaText,
+                    deltaStyle,
+                    {
+                      opacity: scoreDeltaAnim.interpolate({
+                        inputRange: [0, 0.08, 0.9, 1],
+                        outputRange: [0, 1, 1, 0],
+                      }),
+                      transform: [
+                        {
+                          translateY: scoreDeltaAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, -600], // Flies vertically up to the scoreboard header level
+                          }),
+                        },
+                        {
+                          translateX: scoreDeltaAnim.interpolate({
+                            inputRange: [0, 0.4, 0.8, 1],
+                            outputRange: [0, -60, 20, 75], // Curves left to swing out, then curves right directly onto the score label
+                          }),
+                        },
+                        {
+                          scale: scoreDeltaAnim.interpolate({
+                            inputRange: [0, 0.3, 0.8, 1],
+                            outputRange: [0.4, 1.1, 0.4, 0.1], // Shrinks into a pinpoint right as it touches the label
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  {scoreDelta}
+                </Animated.Text>
+              )}
+            </View>
+
+            {/* Navigation buttons: Back | Skip | Next / Submit */}
             <View style={styles.navRow}>
-              {currentIndex > 0 && (
+              {currentIndex > 0 ? (
                 <TouchableOpacity 
                   style={styles.secondaryButton} 
                   onPress={handlePrevious}
@@ -614,7 +676,17 @@ export default function Index() {
                 >
                   <Text style={styles.buttonText}>Back</Text>
                 </TouchableOpacity>
+              ) : (
+                <View style={{ flex: 1 }} />
               )}
+
+              <TouchableOpacity 
+                style={styles.skipButton} 
+                onPress={handleSkip}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.buttonText}>Skip</Text>
+              </TouchableOpacity>
 
               {currentIndex < questions.length - 1 ? (
                 <TouchableOpacity 
@@ -645,13 +717,35 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
   centered: { flex: 1, backgroundColor: '#000000', justifyContent: 'center', alignItems: 'center' },
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 16 },
-  card: { backgroundColor: '#121212', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#27272A' },
+  card: { backgroundColor: '#121212', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#27272A', position: 'relative' },
   topHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   progressText: { fontSize: 14, color: '#FF4D4D', fontWeight: 'bold' },
   
   badgesContainer: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   scoreBadge: { backgroundColor: '#1E293B', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: '#334155' },
   scoreBadgeText: { color: '#38BDF8', fontWeight: 'bold', fontSize: 12 },
+
+  bottomAnimationContainer: {
+    position: 'absolute',
+    bottom: 30,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+  },
+  giantScoreDeltaText: {
+    fontWeight: '900',
+    fontSize: 160,
+    lineHeight: 170,
+    textShadowColor: 'rgba(0,0,0,0.95)',
+    textShadowOffset: { width: 4, height: 4 },
+    textShadowRadius: 12,
+  },
+  deltaPositive: { color: '#22C55E' },
+  deltaNegative: { color: '#EF4444' },
+  deltaNeutral: { color: '#F59E0B' },
+
   timerBadge: { backgroundColor: '#B91C1C', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   timerText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 },
   
@@ -694,9 +788,10 @@ const styles = StyleSheet.create({
   resultOptionText: { color: '#FFFFFF', fontSize: 14, flex: 1 },
   badgeLabel: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 },
 
-  navRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, gap: 12 },
+  navRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, gap: 8 },
   nextButton: { backgroundColor: '#2563EB', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
   submitButton: { backgroundColor: '#16A34A', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
+  skipButton: { backgroundColor: '#D97706', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
   whatsappButton: { backgroundColor: '#25D366', padding: 14, borderRadius: 10, alignItems: 'center' },
   secondaryButton: { backgroundColor: '#27272A', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
   buttonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }
