@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Easing,
   Image,
   Linking,
   SafeAreaView,
@@ -15,11 +16,12 @@ import {
   View
 } from 'react-native';
 
-//const API_URL = 'http://localhost:5000/api';
 const API_URL = 'https://backend-02-zbm8.onrender.com/api';
 
 const DEFAULT_STETHOSCOPE_IMAGE = 'https://img.icons8.com/color/96/stethoscope.png';
 const DANGER_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
+const CELEBRATION_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2000/2000-preview.mp3';
+const SKIP_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3';
 
 interface Option {
   text: string;
@@ -45,21 +47,17 @@ export default function Index() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingOptionIndex, setSpeakingOptionIndex] = useState<number | null>(null);
 
-  // Tracks active speech step
   const [explanationStep, setExplanationStep] = useState<'wrong' | 'correct' | null>(null);
-
-  // Image fallback tracker
   const [failedImages, setFailedImages] = useState<{ [key: string]: boolean }>({});
 
-  // Animations
   const flashAnim = useRef(new Animated.Value(0)).current;
   const [animatingOptionIndex, setAnimatingOptionIndex] = useState<number | null>(null);
 
-  // Bottom Up Curved Floating Score Delta Animation targeting Scoreboard
+  // Floating Score trajectory & Scoreboard Shine animations
   const [scoreDelta, setScoreDelta] = useState<string | null>(null);
   const scoreDeltaAnim = useRef(new Animated.Value(0)).current;
+  const scoreShineAnim = useRef(new Animated.Value(0)).current;
 
-  // Refs to avoid stale closures in timer
   const currentIndexRef = useRef(currentIndex);
   const questionsRef = useRef(questions);
 
@@ -75,7 +73,6 @@ export default function Index() {
     fetchQuestions();
   }, []);
 
-  // Reset TTS and status on question change
   useEffect(() => {
     Speech.stop();
     setIsSpeaking(false);
@@ -85,18 +82,33 @@ export default function Index() {
     flashAnim.setValue(0);
   }, [currentIndex]);
 
-  // Trigger curved score delta animation to end right on the Scoreboard label
   const triggerScoreDeltaAnimation = (deltaText: string) => {
     setScoreDelta(deltaText);
     scoreDeltaAnim.setValue(0);
+    scoreShineAnim.setValue(0);
+
     Animated.timing(scoreDeltaAnim, {
       toValue: 1,
-      duration: 1200,
+      duration: 1000,
+      easing: Easing.bezier(0.25, 1, 0.5, 1),
       useNativeDriver: true,
-    }).start(() => setScoreDelta(null));
+    }).start(() => {
+      setScoreDelta(null);
+      Animated.sequence([
+        Animated.timing(scoreShineAnim, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: false,
+        }),
+        Animated.timing(scoreShineAnim, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    });
   };
 
-  // Timer countdown
   useEffect(() => {
     if (loading || result || questions.length === 0 || isSpeaking) return;
 
@@ -105,7 +117,7 @@ export default function Index() {
         if (prev <= 1) {
           clearInterval(timer);
 
-          // Handle automatic timeout as skipped
+          playSkipSound();
           triggerScoreDeltaAnimation('0');
 
           const currentIdx = currentIndexRef.current;
@@ -132,7 +144,7 @@ export default function Index() {
       const data = await response.json();
       setQuestions(data);
     } catch (error) {
-      console.error("Error fetching questions:", error);
+      console.error('Error fetching questions:', error);
     } finally {
       setLoading(false);
     }
@@ -154,6 +166,38 @@ export default function Index() {
     }
   };
 
+  const playCelebrationSound = async () => {
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: CELEBRATION_SOUND_URL },
+        { shouldPlay: true }
+      );
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          sound.unloadAsync();
+        }
+      });
+    } catch (error) {
+      console.error('Failed to play celebration sound:', error);
+    }
+  };
+
+  const playSkipSound = async () => {
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: SKIP_SOUND_URL },
+        { shouldPlay: true }
+      );
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          sound.unloadAsync();
+        }
+      });
+    } catch (error) {
+      console.error('Failed to play skip sound:', error);
+    }
+  };
+
   const triggerSelectionAnimation = (optionIndex: number) => {
     setAnimatingOptionIndex(optionIndex);
     flashAnim.setValue(0);
@@ -167,7 +211,7 @@ export default function Index() {
         toValue: 0,
         duration: 350,
         useNativeDriver: false,
-      })
+      }),
     ]).start(() => setAnimatingOptionIndex(null));
   };
 
@@ -203,6 +247,10 @@ export default function Index() {
     const currentQ = questions[currentIndex];
     if (!currentQ || !currentQ.options || currentQ.correctOption === undefined) return;
 
+    // PREVENT SELECTION IF ALREADY ANSWERED
+    const alreadyAnswered = userAnswers.some((a) => a.id === currentQ.id);
+    if (alreadyAnswered) return;
+
     Speech.stop();
     setIsSpeaking(false);
     setSpeakingOptionIndex(null);
@@ -220,40 +268,21 @@ export default function Index() {
     const correctReason = correctOpt?.explanation || currentQ.generalExplanation || 'it satisfies the question conditions.';
 
     if (isCorrect) {
+      playCelebrationSound();
       triggerScoreDeltaAnimation('+4');
-      const parts = [
-        {
-          text: `Correct answer! ${correctReason}`,
-          step: 'correct' as const,
-        },
-      ];
-      setTimeout(() => speakSequence(parts), 100);
+      const parts = [{ text: `Correct answer! ${correctReason}`, step: 'correct' as const }];
+      setTimeout(() => speakSequence(parts), 200);
     } else {
       triggerScoreDeltaAnimation('-1');
       playDangerSound();
       const parts = [
-        {
-          text: `Wrong answer. Option ${optionIndex + 1} is incorrect because ${wrongReason}.`,
-          step: 'wrong' as const,
-        },
-        {
-          text: `The correct answer is Option ${currentQ.correctOption + 1}: ${correctText}, because ${correctReason}`,
-          step: 'correct' as const,
-        },
+        { text: `Wrong answer. Option ${optionIndex + 1} is incorrect because ${wrongReason}.`, step: 'wrong' as const },
+        { text: `The correct answer is Option ${currentQ.correctOption + 1}: ${correctText}, because ${correctReason}`, step: 'correct' as const },
       ];
-      setTimeout(() => speakSequence(parts), 100);
+      setTimeout(() => speakSequence(parts), 200);
     }
 
-    setUserAnswers((prev) => {
-      const existingIndex = prev.findIndex((a) => a.id === currentQ.id);
-      if (existingIndex > -1) {
-        const updated = [...prev];
-        updated[existingIndex].selectedOption = optionIndex;
-        return updated;
-      } else {
-        return [...prev, { id: currentQ.id, selectedOption: optionIndex }];
-      }
-    });
+    setUserAnswers((prev) => [...prev, { id: currentQ.id, selectedOption: optionIndex }]);
   };
 
   const speakQuestion = (text: string) => {
@@ -323,6 +352,13 @@ export default function Index() {
   };
 
   const handleSkip = () => {
+    const currentQ = questions[currentIndex];
+    const alreadyAnswered = userAnswers.some((a) => a.id === currentQ?.id);
+
+    // PREVENT SKIP IF ALREADY ANSWERED
+    if (alreadyAnswered) return;
+
+    playSkipSound();
     triggerScoreDeltaAnimation('0');
     handleNext();
   };
@@ -349,12 +385,12 @@ export default function Index() {
       const response = await fetch(`${API_URL}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers: userAnswers })
+        body: JSON.stringify({ answers: userAnswers }),
       });
       const data = await response.json();
       setResult(data);
     } catch (error) {
-      console.error("Error submitting answers:", error);
+      console.error('Error submitting answers:', error);
     } finally {
       setLoading(false);
     }
@@ -402,7 +438,7 @@ export default function Index() {
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.card}>
             <Text style={styles.headerText}>NEET Practice Result</Text>
-            
+
             <Text style={styles.scoreText}>
               Your Score: {result.score} / {result.maxScore}
             </Text>
@@ -438,7 +474,7 @@ export default function Index() {
                   <Text style={styles.summaryQuestionText}>
                     {qIndex + 1}. {q.question}
                   </Text>
-                  
+
                   {q.options.map((opt, optIndex) => {
                     const isCorrect = optIndex === correctIdx;
                     const isUserChoice = optIndex === userSelected;
@@ -477,7 +513,7 @@ export default function Index() {
 
   // ================= QUIZ VIEW =================
   const currentQ = questions[currentIndex];
-  const selectedForCurrent = userAnswers.find(a => a.id === currentQ?.id)?.selectedOption;
+  const selectedForCurrent = userAnswers.find((a) => a.id === currentQ?.id)?.selectedOption;
   const currentLiveScore = calculateLiveScore();
   const maxPossibleScore = questions.length * 4;
 
@@ -485,7 +521,23 @@ export default function Index() {
   const selectedOptObj = isCurrentAnswered ? currentQ.options[selectedForCurrent] : null;
   const correctOptObj = isCurrentAnswered ? currentQ.options[currentQ.correctOption] : null;
 
-  const deltaStyle = scoreDelta === '+4' ? styles.deltaPositive : scoreDelta === '-1' ? styles.deltaNegative : styles.deltaNeutral;
+  const deltaStyle =
+    scoreDelta === '+4' ? styles.deltaPositive : scoreDelta === '-1' ? styles.deltaNegative : styles.deltaNeutral;
+
+  const scoreboardBgColor = scoreShineAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#1E293B', '#0284C7'],
+  });
+
+  const scoreboardBorderColor = scoreShineAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#38BDF8', '#FFFFFF'],
+  });
+
+  const scoreboardScale = scoreShineAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.25, 1],
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -496,14 +548,22 @@ export default function Index() {
               <Text style={styles.progressText}>
                 Q{currentIndex + 1}/{questions.length}
               </Text>
-              
+
               <View style={styles.badgesContainer}>
-                {/* Scoreboard Target */}
-                <View style={styles.scoreBadge}>
+                <Animated.View
+                  style={[
+                    styles.scoreBadge,
+                    {
+                      backgroundColor: scoreboardBgColor,
+                      borderColor: scoreboardBorderColor,
+                      transform: [{ scale: scoreboardScale }],
+                    },
+                  ]}
+                >
                   <Text style={styles.scoreBadgeText}>
-                    Score: {currentLiveScore >= 0 ? `+${currentLiveScore}` : currentLiveScore} / {maxPossibleScore}
+                    SCORE: {currentLiveScore >= 0 ? `+${currentLiveScore}` : currentLiveScore} / {maxPossibleScore}
                   </Text>
-                </View>
+                </Animated.View>
 
                 <View style={styles.timerBadge}>
                   <Text style={styles.timerText}>⏳ {timeLeft}s</Text>
@@ -515,8 +575,8 @@ export default function Index() {
               <Text style={styles.questionText}>{currentQ.question}</Text>
               <TouchableOpacity
                 style={[
-                  styles.audioButton, 
-                  isSpeaking && speakingOptionIndex === null && styles.audioButtonActive
+                  styles.audioButton,
+                  isSpeaking && speakingOptionIndex === null && styles.audioButtonActive,
                 ]}
                 onPress={() => speakQuestion(currentQ.question)}
                 activeOpacity={0.7}
@@ -534,12 +594,11 @@ export default function Index() {
               const isAnimatingThisOption = animatingOptionIndex === index;
 
               const imageKey = `${currentQ.id}-${index}`;
-              const imageUri = (option.image && !failedImages[imageKey]) 
-                ? option.image 
-                : DEFAULT_STETHOSCOPE_IMAGE;
+              const imageUri =
+                option.image && !failedImages[imageKey] ? option.image : DEFAULT_STETHOSCOPE_IMAGE;
 
               let cardStyle = styles.optionCard;
-              if (selectedForCurrent !== undefined) {
+              if (isCurrentAnswered) {
                 if (isCorrectAnswer) {
                   cardStyle = styles.correctOptionCard;
                 } else if (isSelected) {
@@ -557,6 +616,7 @@ export default function Index() {
                 <TouchableOpacity
                   key={index}
                   onPress={() => handleSelectOption(index)}
+                  disabled={isCurrentAnswered}
                   activeOpacity={0.8}
                 >
                   <Animated.View
@@ -584,7 +644,7 @@ export default function Index() {
                     <Text style={styles.optionText}>
                       {index + 1}. {option.text}
                     </Text>
-                    
+
                     <TouchableOpacity
                       style={[styles.optionAudioButton, isOptionSpeaking && styles.audioButtonActive]}
                       onPress={(e) => {
@@ -621,13 +681,13 @@ export default function Index() {
                   ✅ Right Answer Explanation (Option {currentQ.correctOption + 1}: {correctOptObj?.text}):
                 </Text>
                 <Text style={styles.explanationText}>
-                  {correctOptObj?.explanation || currentQ.generalExplanation || "This choice is correct."}
+                  {correctOptObj?.explanation || currentQ.generalExplanation || 'This choice is correct.'}
                 </Text>
               </View>
             )}
 
-            {/* Score Delta animation trajectory that flies in a curve and lands on the top-right score label */}
-            <View style={styles.bottomAnimationContainer} pointerEvents="none">
+            {/* Floating Delta */}
+            <View style={styles.floatingContainer} pointerEvents="none">
               {scoreDelta !== null && (
                 <Animated.Text
                   style={[
@@ -635,26 +695,26 @@ export default function Index() {
                     deltaStyle,
                     {
                       opacity: scoreDeltaAnim.interpolate({
-                        inputRange: [0, 0.08, 0.9, 1],
-                        outputRange: [0, 1, 1, 0],
+                        inputRange: [0, 0.8, 1],
+                        outputRange: [1, 1, 0],
                       }),
                       transform: [
                         {
                           translateY: scoreDeltaAnim.interpolate({
                             inputRange: [0, 1],
-                            outputRange: [0, -600], // Flies vertically up to the scoreboard header level
+                            outputRange: [0, -560],
                           }),
                         },
                         {
                           translateX: scoreDeltaAnim.interpolate({
-                            inputRange: [0, 0.4, 0.8, 1],
-                            outputRange: [0, -60, 20, 75], // Curves left to swing out, then curves right directly onto the score label
+                            inputRange: [0, 1],
+                            outputRange: [0, 75],
                           }),
                         },
                         {
                           scale: scoreDeltaAnim.interpolate({
-                            inputRange: [0, 0.3, 0.8, 1],
-                            outputRange: [0.4, 1.1, 0.4, 0.1], // Shrinks into a pinpoint right as it touches the label
+                            inputRange: [0, 0.8, 1],
+                            outputRange: [1, 1.1, 0],
                           }),
                         },
                       ],
@@ -666,11 +726,11 @@ export default function Index() {
               )}
             </View>
 
-            {/* Navigation buttons: Back | Skip | Next / Submit */}
+            {/* Navigation buttons */}
             <View style={styles.navRow}>
               {currentIndex > 0 ? (
-                <TouchableOpacity 
-                  style={styles.secondaryButton} 
+                <TouchableOpacity
+                  style={styles.secondaryButton}
                   onPress={handlePrevious}
                   activeOpacity={0.7}
                 >
@@ -680,25 +740,26 @@ export default function Index() {
                 <View style={{ flex: 1 }} />
               )}
 
-              <TouchableOpacity 
-                style={styles.skipButton} 
+              <TouchableOpacity
+                style={[styles.skipButton, isCurrentAnswered && styles.disabledButton]}
                 onPress={handleSkip}
+                disabled={isCurrentAnswered} // DISABLE SKIP ONCE ANSWERED
                 activeOpacity={0.7}
               >
                 <Text style={styles.buttonText}>Skip</Text>
               </TouchableOpacity>
 
               {currentIndex < questions.length - 1 ? (
-                <TouchableOpacity 
-                  style={styles.nextButton} 
+                <TouchableOpacity
+                  style={styles.nextButton}
                   onPress={handleNext}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.buttonText}>Next</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity 
-                  style={styles.submitButton} 
+                <TouchableOpacity
+                  style={styles.submitButton}
                   onPress={handleSubmit}
                   activeOpacity={0.7}
                 >
@@ -719,15 +780,26 @@ const styles = StyleSheet.create({
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 16 },
   card: { backgroundColor: '#121212', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#27272A', position: 'relative' },
   topHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  progressText: { fontSize: 14, color: '#FF4D4D', fontWeight: 'bold' },
-  
-  badgesContainer: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  scoreBadge: { backgroundColor: '#1E293B', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: '#334155' },
-  scoreBadgeText: { color: '#38BDF8', fontWeight: 'bold', fontSize: 12 },
+  progressText: { fontSize: 15, color: '#FF4D4D', fontWeight: 'bold' },
 
-  bottomAnimationContainer: {
+  badgesContainer: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  
+  scoreBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 22,
+    borderWidth: 2,
+    shadowColor: '#38BDF8',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  scoreBadgeText: { color: '#FFFFFF', fontWeight: '900', fontSize: 15, letterSpacing: 0.5 },
+
+  floatingContainer: {
     position: 'absolute',
-    bottom: 30,
+    bottom: 90,
     left: 0,
     right: 0,
     alignItems: 'center',
@@ -736,19 +808,19 @@ const styles = StyleSheet.create({
   },
   giantScoreDeltaText: {
     fontWeight: '900',
-    fontSize: 160,
-    lineHeight: 170,
-    textShadowColor: 'rgba(0,0,0,0.95)',
-    textShadowOffset: { width: 4, height: 4 },
-    textShadowRadius: 12,
+    fontSize: 54,
+    lineHeight: 62,
+    textShadowColor: '#000000',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 6,
   },
   deltaPositive: { color: '#22C55E' },
   deltaNegative: { color: '#EF4444' },
   deltaNeutral: { color: '#F59E0B' },
 
-  timerBadge: { backgroundColor: '#B91C1C', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  timerText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 },
-  
+  timerBadge: { backgroundColor: '#B91C1C', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 22 },
+  timerText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14 },
+
   questionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, gap: 10 },
   questionText: { flex: 1, fontSize: 18, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 26 },
   audioButton: { backgroundColor: '#27272A', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#3F3F46' },
@@ -759,7 +831,7 @@ const styles = StyleSheet.create({
   optionCard: { backgroundColor: '#1E1E24', borderColor: '#27272A' },
   correctOptionCard: { backgroundColor: '#15803D', borderColor: '#22C55E' },
   wrongOptionCard: { backgroundColor: '#991B1B', borderColor: '#EF4444' },
-  
+
   optionImage: { width: 40, height: 40, borderRadius: 6, marginRight: 12, backgroundColor: '#27272A' },
   optionText: { fontSize: 15, color: '#FFFFFF', fontWeight: 'bold', flex: 1 },
   optionAudioButton: { backgroundColor: '#27272A', width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#3F3F46', marginLeft: 8 },
@@ -777,7 +849,7 @@ const styles = StyleSheet.create({
   statBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
   statBadgeText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFFFFF', marginTop: 20, marginBottom: 12 },
-  
+
   summaryCard: { backgroundColor: '#18181B', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#27272A' },
   summaryQuestionText: { fontSize: 15, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 8 },
   summaryExplanationText: { color: '#A1A1AA', fontSize: 13, marginTop: 8 },
@@ -792,7 +864,8 @@ const styles = StyleSheet.create({
   nextButton: { backgroundColor: '#2563EB', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
   submitButton: { backgroundColor: '#16A34A', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
   skipButton: { backgroundColor: '#D97706', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
+  disabledButton: { opacity: 0.4 },
   whatsappButton: { backgroundColor: '#25D366', padding: 14, borderRadius: 10, alignItems: 'center' },
   secondaryButton: { backgroundColor: '#27272A', padding: 14, borderRadius: 10, alignItems: 'center', flex: 1 },
-  buttonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }
+  buttonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 },
 });
